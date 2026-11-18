@@ -1,49 +1,66 @@
-# Time in a Bottle for Horizon
+# Time in a Bottle — a Horizon port
 
-A clean-room Rust port of **Time in a Bottle 6.5.4** (MIT, RealMangoRage) to
-Horizon (Minecraft Java 26.3). This is **slice 1**: the bottle, its stored-tick
-account, and one target family — a furnace, smoker or blast furnace — advanced
-by exactly the ticks the bottle spends.
+**Time in a Bottle** is a Minecraft mod. A mod for Minecraft - This item allows you to accelerate the rate at which blocks tick, ported to 1.16 - 1.21+. This repository is a **port of it to [Horizon](https://github.com/horizon-rust/horizon)**, the Rust engine for Minecraft Java 26.3. It carries the complete source of the port plus the content files it ships, and installs as a single `.hmod` package.
 
-One file installs it. `tiab.hmod` is a single SDK package (mod API `0.2`): the
-item, its model, animated texture, eight lang files, recipe and block tag, and
-the Rust code that stores and spends ticks, all in one archive under the pin in
-`horizon-mod.toml`.
+Upstream: [RealMangorage/time-in-a-bottle](https://github.com/RealMangorage/time-in-a-bottle) — licence **MIT**.
 
-## What it does
+| | |
+|---|---|
+| Upstream mod | Time in a Bottle ([source](https://github.com/RealMangorage/time-in-a-bottle)) |
+| Ported to | Horizon 0b14f8a, Minecraft Java 26.3, mod API `0.2` |
+| Package | `tiab.hmod` (install it with the Horizon launcher) |
+| Licence | **MIT** — the upstream mod's licence; see [Licence and credit](#licence-and-credit) |
 
-- **Store.** While the bottle is carried, the first one in the inventory gains
-  one stored tick per game tick (20 a second), up to 622,080,000 ticks. A
-  second line tracks every tick ever stored.
-- **Spend.** Right-click a furnace with the bottle: one use costs **600**
-  stored ticks and starts an accelerator that gives the furnace one extra
-  block tick per game tick for 600 game ticks — the furnace advances by
-  exactly the ticks spent. Right-click again to double the rate (600 ticks
-  buys 2x, 1,200 buys 4x, and so on), up to **128x**. The click is claimed, so
-  the furnace's menu does not open.
-- **Creative** pays nothing, as upstream's `canUse` allows; an unfilled bottle
-  in survival pays nothing either and starts nothing.
-- **Commands.** `/tiab time add|remove <player> <seconds>` (permission level 2)
-  and `/tiab info <x> <y> <z> <n>`, a one-line readout of the clock, the
-  bottle's account and the furnace at that position.
+## What this port implements
 
-## Build and check
+- **The bottle.** `tiab:time_in_a_bottle`, a stack-size-1 item on the inert
+- **Storing.** At the end of every second the first bottle in the 36 main
+- **Spending.** `TiabItem.useOn`, on the global `right_click_block` hook (which
+- **Accelerating.** At `level_tick_post` each accelerator runs `rate` block
+- **Commands.** `/tiab time add|remove <player> <seconds>` (permission level
+- **Tooltip.** The two carried lang keys, `Stored time HH:MM:SS` and
 
-```sh
-cargo test                                              # the pure half
-cargo clippy --all-targets -- -D warnings
-cargo fmt --check
-rm -f Cargo.lock                                        # it would be packed
-cargo horizon-mod build                                 # target/horizon-mod/tiab.hmod
-cargo horizon-mod check tiab.hmod
-cargo horizon-mod fits tiab.hmod --build nightly
+## Not yet ported
+
+- `LevelRef::block_tick` runs the block's **scheduled** tick
+- `block_entity_tick`/`block_entity_ticks` are `BlockEntityPart` methods, and
+- there is no `furnace`/`smelt`/`tick a block entity` host call.
+- **Kept:** a furnace cooks and burns fuel at the accelerator's rate; the fuel
+- **Lost:** one cook finishes per game tick **at most** and the remainder of the
+- **The accelerator is not an entity and is not saved.** The API declares no
+- **Only the furnace family is accelerated** (`minecraft:furnace`, `smoker`,
+- **The command reaches only the acting player.** `/tiab time add <player>`
+
+## Installing
+
+1. Install the [Horizon launcher](https://github.com/horizon-rust/horizon/releases) (0.2.70 or newer).
+2. Add `tiab.hmod` to the instance's mods.
+3. The package is pinned to a specific Horizon build; the launcher checks that pin.
+
+## Licence and credit
+
+Time in a Bottle was created by its upstream authors; the code, models and assets in the original mod
+remain theirs and are used here under **MIT**. The Rust in this repository is a clean-room
+rewrite for Horizon, not a translation of the original source.
+
+- `LICENSE` — the upstream licence text.
+- `LICENSE-NOTICE.md` — what this port carries and where it came from.
+- The upstream project: https://github.com/RealMangorage/time-in-a-bottle
+
+## Technical details
+
+```
+horizon-mod.toml   package manifest (id, version, api, [native] pin)
+Cargo.toml         the crate; depends on `horizon-mod-api` from the fetched SDK
+src/               lib.rs (the one `impl Hooks`), runtime.rs (pure logic + tests), glue
+assets/ data/      the content the package ships
+tools/             content generators and the e2e scenario
 ```
 
-`runtime.rs` is the pure half (the account's arithmetic and one accelerator's
-rate), byte-identical to the pre-SDK port; `glue.rs` is the game side. The gaps
-(a saved accelerator, targets beyond the furnace family, other players'
-inventories, config, particles) are listed in `notes.md`.
+- Build: `cargo horizon-mod build` (packages; it does not compile against the game).
+- Test: `cargo test`, `cargo clippy --all-targets -- -D warnings`.
+- In-game: `ports/tools/launcher-game.sh run tiab` in the campaign tree, or install the
+  `.hmod` and play; the harness scenario is `tools/e2e.sh`.
 
-Licence: MIT; the carried assets are upstream's own files, re-created from the
-audited jar by `tools/assemble_content.py`. `LICENSE` and `LICENSE-NOTICE.md`
-travel inside the package.
+This repository is generated from the campaign's port at `ports/tiab/`; the port's own
+`notes.md` is the full record (decisions, traps, evidence).
