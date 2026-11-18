@@ -1,0 +1,10 @@
+{
+  "components": {
+    "tiab:stored_time": {
+      "stored": 0,
+      "total": 0
+    }
+  },
+  "max_stack_size": 1,
+  "template": "minecraft:clock"
+}
