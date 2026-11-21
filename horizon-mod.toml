@@ -1,11 +1,12 @@
 id = "tiab"
 name = "Time in a Bottle"
-version = "0.2.0"
+version = "0.2.3"
 description = """A port of Time in a Bottle for Horizon: a bottle that stores one tick for every
-game tick it is carried and spends 600 of them to accelerate a furnace, smoker or blast furnace.
+game tick it is carried and spends 600 of them to accelerate a block entity.
 One use runs one extra block tick per game tick for 600 game ticks; a second use on the same
 block doubles the rate, up to 128x. The accelerator is a stored-timer fast-forward rather than a
-mod entity, and only the furnace family is accelerated (notes.md carries both gaps)."""
+mod entity, and it drives the furnace family (furnace, smoker, blast furnace) and the campfire
+family (campfire, soul campfire); notes.md carries the rest of the gap."""
 authors = ["RealMangoRage", "AdLf0208"]
 # One flat package: the item, its assets/data and the Rust code that spends the stored time. The
 # id is the resource namespace and the only identity; Cargo's package name and version are not
@@ -21,5 +22,5 @@ capabilities = ["registries"]
 
 [native]
 game = "26.3"
-horizon = "0b14f8acfd97fa2c750e42795249dcc981178ca4"
+horizon = "0a875da91dbb0fdcb7ba8c42c11341aa229af51a"
 mixins = "e59da9094f0c2fdda6c627fe9eff22dec6a906f0"

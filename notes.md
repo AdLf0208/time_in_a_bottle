@@ -1,4 +1,4 @@
-# Time in a Bottle — port notes (slice 1, migrated to the SDK format)
+# Time in a Bottle — port notes (slices 1–2, the SDK format)
 
 Ported from **Time in a Bottle 6.5.4** (`tiab-neoforge-6.5.4.jar`, 88 entries,
 SHA-256 `0beb4ff1d81facfe9039e8d657a75836d1e8c13c137c90b491cc07e763f26325`) for
@@ -7,21 +7,28 @@ publishing is approved (ARCHITECTURE.md §8). Clean-room Rust rewrite from the
 mod's behaviour; what the mod does and its evidence are in
 [`FINDINGS.md`](FINDINGS.md).
 
-**Format: the SDK package (2026-11-18), version 0.2.0.** This port was migrated
-from the retired `.hnmod` container to one flat `.hmod` (mod API `0.2`, SDK
-nightly **`0b14f8acfd97fa2c750e42795249dcc981178ca4`**, mixins
-**`e59da9094f0c2fdda6c627fe9eff22dec6a906f0`**). `src/runtime.rs` is
-**byte-identical** to the pre-migration `mixins/tiab/runtime.rs` — sha256
-`3594d9499e82ba0b8efd1ad31e30521d2583c419327692dd4302eede661be9ae`, `cmp`
-against the retired copy and against the file inside the delivered package. See
+**Format: the SDK package (2026-11-18), version 0.2.3.** This port was migrated
+from the retired `.hnmod` container to one flat `.hmod` (mod API `0.2`); the
+current pin is SDK nightly **`0a875da91dbb0fdcb7ba8c42c11341aa229af51a`**
+(2026-11-20) with mixins **`e59da9094f0c2fdda6c627fe9eff22dec6a906f0`**. The
+migration was at `0b14f8a`; slice 2 (campfire family, 0.2.3) repinned to
+`0a875da` (the API-only delta touches no hook this port implements —
+`attack_entity`, `entity_interact`, `hanging_break` gained a leading
+`dimension`). `src/runtime.rs` was **byte-identical** to the pre-migration
+copy through 0.2.0; the 0.2.1 review added `info_permitted`/`furnace_block` to
+it, and 0.2.3 added the `Family`/`Fire` classification and
+`campfire_progress`. See
 [`## Migration to the SDK format`](#migration-to-the-sdk-format) for the file
-map, the method map and every trap.
+map, the method map and every trap, and
+[`## Slice 2 (0.2.3)`](#slice-2-023-the-campfire-family) for this slice.
 
 Status: **ported-partial** — slice 1 (the bottle's stored-tick account, one
-accelerator per block, the furnace family as the target, `/tiab time` and the
-harness readout) is implemented; the 0.1.0 in-game run is its behaviour
-evidence, and the SDK package was **not** re-run in game here (no
-`horizon-launcher`, trap 15). The gap list below is the rest of the mod.
+accelerator per block, the **furnace family**, `/tiab time` and the harness
+readout) and slice 2 (**the campfire family**: campfire and soul campfire cook
+at the accelerator's rate, proven in game) are implemented. Behaviour evidence:
+the 0.1.0 run for slice 1 and the 0.2.3 run (phases A–H, control and
+`SELFTEST=1`) in `ports/_shared/evidence/tiab-e2e/`. The gap list below is the
+rest of the mod.
 
 **Why this mod:** it is the rank-0 `content`/`logic` core mod
 `precheck-mod.py tiab` offers (`DISPATCHABLE`, jar licence MIT, rank 0, no
@@ -51,7 +58,7 @@ publishing (ARCHITECTURE.md §8); publishable under MIT with this source.
   [`CONTENT.md`](CONTENT.md)); the stored-time account, the accelerator, the
   furnace fast-forward, the commands and the tooltip are the agent port.
 
-## What the slice does
+## What the port does (slices 1–2)
 
 - **The bottle.** `tiab:time_in_a_bottle`, a stack-size-1 item on the inert
   `minecraft:clock` template, with the component `tiab:stored_time`
@@ -65,23 +72,26 @@ publishing (ARCHITECTURE.md §8); publishable under MIT with this source.
   retired port needed a `server_tick` inventory resync for a single player's LAN
   guest; it is gone, see §Deviations).
 - **Spending.** `TiabItem.useOn`, on the global `right_click_block` hook (which
-  runs before the furnace's own `use`, so the menu never opens): a furnace,
-  smoker or blast furnace that is not in `#tiab:un_acceleratable` gets an
-  accelerator. One use costs **600** stored ticks and runs 600 game ticks at
-  rate 1; a second click doubles the rate (`rate / 2 * 600` at the new rate) and
-  adds half of the time already used up, up to 128x. Creative mode pays nothing
-  (`canUse`).
+  runs before the target's own `use`, so a furnace's menu never opens): a block
+  entity the port can drive — the **furnace family** (furnace, smoker, blast
+  furnace) or the **campfire family** (campfire, soul campfire) — that is not in
+  `#tiab:un_acceleratable` gets an accelerator. One use costs **600** stored
+  ticks and runs 600 game ticks at rate 1; a second click doubles the rate
+  (`rate / 2 * 600` at the new rate) and adds half of the time already used up,
+  up to 128x. Creative mode pays nothing (`canUse`).
 - **Accelerating.** At `level_tick_post` each accelerator runs `rate` block
-  ticks on its furnace, spends one game tick and removes itself at zero. The
-  extra `rate - 1` ticks are written into the furnace's saved
-  `cooking_time_spent`/`lit_time_remaining`, so it cooks and burns fuel at the
-  accelerator's rate (§The API gap).
+  ticks on its target, spends one game tick and removes itself at zero. The
+  extra ticks are written into the timers the target's own tick reads — a
+  furnace's `cooking_time_spent`/`lit_time_remaining`, a campfire's four
+  `CookingTimes` — so it cooks (or roasts) and burns fuel at the accelerator's
+  rate (§The API gap).
 - **Commands.** `/tiab time add|remove <player> <seconds>` (permission level
   2, upstream's clamp `MAX_STORED_TIME / TICKS_CONST`) and
-  `/tiab info <x> <y> <z> <n>` — the harness readout (clock, the bottle's
-  account, the furnace's cook/out/lit and the accelerator's rate/remaining in
-  one line). Upstream has no commands besides `/tiab time`; the readout is the
-  ports' `/powah info` precedent.
+  `/tiab info <x> <y> <z> <n>` — the harness readout: the clock, the bottle's
+  account, and the target's family, first timer and its cooking time, item
+  count, fire/fuel state and the accelerator's rate/remaining in one line
+  (`kind=furnace|campfire|none cook= ct= out= lit=`). Upstream has no commands
+  besides `/tiab time`; the readout is the ports' `/powah info` precedent.
 - **Tooltip.** The two carried lang keys, `Stored time HH:MM:SS` and
   `Total accumulated time HH:MM:SS`, built with the same `HH:MM:SS` split
   `CommonHelper` uses.
@@ -94,7 +104,7 @@ publishing (ARCHITECTURE.md §8); publishable under MIT with this source.
 | `register` | `Hooks::register` | `item_key("tiab:time_in_a_bottle")`, then attaches the `Bottle` Part to it |
 | `inventory_tick` (item-scoped) | `ItemPart::inventory_tick` on `Bottle` | the first bottle stores 20 ticks a second |
 | `right_click_block` (global, cancellable) | `Hooks::right_click_block` | spend stored ticks on a furnace, claim the click (`InteractionResult::Success` + `Flow::Cancel`) |
-| `level_tick_post` | `Hooks::level_tick_post` | run each accelerator's extra furnace ticks |
+| `level_tick_post` | `Hooks::level_tick_post` | run each accelerator's extra block ticks on its target (furnace or campfire timers) |
 | `register_commands` | `Hooks::register_commands` | `/tiab time add|remove`, `/tiab info` |
 | `player_command` | `Hooks::player_command` | their bodies (raw string, before the tree) |
 | `tooltip` (item-scoped) | `ItemPart::tooltip` on `Bottle` | the two time lines |
@@ -242,6 +252,33 @@ takes; `merge_data`, not `replace_data`, so `Items` survives):
 
 `extra = rate - 1`, because the furnace's own tick already runs once per game
 tick. The shape is `glue::fast_forward`, pure and unit-tested (5 tests).
+
+### The campfire family (slice 2)
+
+The same gap blocks the second family. A lit `CampfireBlockEntity`'s own tick (`cookTick`) raises
+each occupied slot's `CookingTimes` entry by one and completes the cook at
+`progress >= total`, dropping the result at the block's corner; an unlit one runs `cooldownTick`
+(two off a tick, never below zero). The port writes the four `CookingTimes` entries the same way it
+writes a furnace's timer, and the campfire's own tick still finishes and drops the item:
+
+| Saved key (engine's own, `crates/horizon-client-render/src/containers.rs`) | Write |
+|---|---|
+| `CookingTimes` (int array, 4) | `+ extra` while lit, held at `CookingTotalTimes[i]` |
+| `CookingTimes` (int array, 4) | `- 2 * extra` while unlit, floored at 0 (vanilla's cooldown) |
+
+The occupancy comes from the block entity's saved `Items` list (`Slot` byte per stack), not from
+the item-handler view: a campfire is not a menu container, so `ItemPlace::BlockEntity` does not
+answer for it, and `items[slot].is_some()` is only true after `place_food` has run.
+
+**A corrected loss bound (measured, 2026-11-21).** The furnace text above used to say no rate-1
+accelerated tick is ever lost. It is not true: the fast-forward writes the timer **at `total`**,
+and a furnace tick that starts at `cooking_total` completes the cook and discards the increment it
+just added — up to one accelerated tick per completed cook, at any rate. Measured on the 0.2.3
+package: a rate-1 probe sampled every 25 ticks for 1,500 ticks broke
+`cooked = game ticks + delivered` in 1 of 60 intervals, by exactly one tick
+(`ports/_shared/evidence/tiab/probe-rate1-intervals.log`), and the e2e's C/E phases each lost one
+tick over 8–9 cooks. The e2e therefore bounds the accelerated ticks by the number of cooks in the
+window instead of asserting exactness.
 
 **Semantics this keeps and loses** (also §Gaps 10):
 
@@ -395,8 +432,37 @@ added (16–26):
     artifact, without them 28,328 B. So re-read the manifest after a wave if a
     registration depends on its licence fields, and keep the licence in
     `LICENSE-NOTICE.md` (packed) as well, which is what this package does.
+28. **`ctl screen` hangs at `0a875da`.** One call blocked a probe until the guard's
+    idle deadline (`horizon-ctl`'s read timeout is off by default, which is why
+    the `e2e-guard` shim exists). `tools/e2e.sh` never calls it: ingredients are
+    found with `ctl inventory` (its `hotbar[]` carries the slot number) and a
+    container's state comes from `/tiab info`. `ctl menu` answers but lists only
+    some slots, so it is not a slot table either.
+29. **`click-slot` needs a renderer.** On `--headless` every call answers
+    `{"error":"no renderer yet"}` because it clicks the drawn screen; the recipe
+    phase needs `--offscreen` (a window that draws but is not shown). The e2e
+    launches offscreen for that reason.
+30. **`look-at-block X Y Z west` fails on a campfire.** The block is 7/16 high, so
+    a standing player's eye is above its side faces and the harness answers
+    `no face of block … is visible from here`; aim at `up`. A furnace (a full
+    block) still takes `west`.
 
-### 8. Changelog (the resubmission supersedes #828)
+### 8. Changelog for 0.2.3 (this slice)
+
+For the registry entry's `changelog` field:
+
+> **0.2.3** — the campfire family. A lit campfire or soul campfire is now a
+> target too: one use writes its four `CookingTimes` timers at the accelerator's
+> rate, so a potato roasts in half the game ticks while the campfire's own tick
+> still finishes and drops it, and an unlit campfire cools at the same rate.
+> Repinned to Horizon `0a875da` (Nightly 2026-11-20; mixins unchanged, no hook
+> this port uses changed). `/tiab info` now reports the target's family, its
+> cooking time and its items (`kind= cook= ct= out= lit=`), so the campfire
+> timer is readable in one atomic line. Still open: hoppers and mod machines as
+> targets (no API runs a vanilla block entity's tick), a saved accelerator, a
+> config, sounds/particles, and the off-hand for `/tiab time`.
+
+### 8a. Changelog of 0.2.0 (the resubmission that superseded #828)
 
 For the registry entry's `changelog` field:
 
@@ -455,12 +521,16 @@ assembler reproduces all 16 byte-for-byte (verified: same SHA-256 for each).
    chunk unload ends a running acceleration, and the client draws no floating
    text. Upstream saves `{position, timeRate, remainingTime}` in the entity's
    NBT.
-2. **Only the furnace family is accelerated** (`minecraft:furnace`, `smoker`,
-   `blast_furnace`). Upstream ticks any block entity's own ticker — hoppers,
-   campfires, brewing stands, mod machines — and randomly-ticking blocks at a
-   1/1365 chance per accelerated tick. Those targets do nothing here (the click
-   is claimed and the accelerator ends on its first tick because the target is
-   not a furnace).
+2. **Two families are accelerated: the furnace's and the campfire's**
+   (`minecraft:furnace`, `smoker`, `blast_furnace`; `minecraft:campfire`,
+   `soul_campfire`). Upstream ticks any block entity's own ticker — hoppers,
+   brewing stands, mod machines — and randomly-ticking blocks at a 1/1365 chance
+   per accelerated tick. Those targets do nothing here: the click is not claimed
+   (their own `use` runs) because no API runs a vanilla block entity's tick, and
+   a block without a family this port can drive is upstream's `FAIL` too. A
+   randomly-ticking block would need to know that its state ticks randomly, and
+   the API has no such predicate (`block_state_*` exposes replacement, speed,
+   light and the like, not the random-tick flag), so it stays a gap.
 3. **The command reaches only the acting player.** `/tiab time add <player>`
    refuses another player: the API has no inventory write for another player.
 4. **No config file.** The four `ITiabConfig` defaults are the constants in
@@ -477,12 +547,14 @@ assembler reproduces all 16 byte-for-byte (verified: same SHA-256 for each).
    such command.
 9. **A creative use still starts an accelerator on a block with nothing
    stored**, exactly as `canUse` allows; the account is untouched.
-10. **The acceleration is a saved-timer fast-forward, not extra furnace
-    ticks** (§5): one cook per game tick at most, the last cook's remainder
-    dropped, and the block's `lit` property follows the engine's own tick (so
-    it can lag one tick behind the saved timers). A high rate therefore runs
-    slightly slower than upstream's `rate` multiplier; 1x and 2x are exact
-    except for that last-cook remainder.
+10. **The acceleration is a saved-timer fast-forward, not extra block-entity
+    ticks** (§5): one cook per game tick at most, the cook's remainder dropped,
+    and the block's `lit` property follows the engine's own tick (so it can lag
+    one tick behind the saved timers). A high rate therefore runs slightly
+    slower than upstream's `rate` multiplier, and **up to one accelerated tick
+    per completed cook** is lost at any rate: a furnace or campfire tick that
+    starts at its cooking time completes the cook and discards the increment it
+    added (measured, 1 in 60 sampled intervals; §The campfire family).
 11. **Command answers are chat replies.** `player_command` runs with no player's
     state swapped in, so `PlayerRef::action_bar` reaches nobody: "Added N
     seconds" and the upstream tell both go to `event.replies`. A console
@@ -510,20 +582,158 @@ pin/API limits, not defects. The migration **fixed one port defect of its own**:
 the tooltip colours were carried over as RGB and would have rendered as
 alpha-0 text under the SDK's packed `rgba` (trap 19).
 
+## Slice 2 (0.2.3): the campfire family
+
+Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-development,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices
+
+**The gap it comes from** (§Deviations 2, before this slice):
+
+> **Only the furnace family is accelerated** (`minecraft:furnace`, `smoker`,
+> `blast_furnace`). Upstream ticks any block entity's own ticker — hoppers,
+> campfires, brewing stands, mod machines — and randomly-ticking blocks at a
+> 1/1365 chance per accelerated tick.
+
+**Why this family, and why the tier fits.** A campfire is the second block entity whose own tick
+this port can reproduce without running it: its state is four `CookingTimes` entries that its own
+tick advances, exactly the shape the furnace family already uses at `level_tick_post`. It is a
+`logic`-tier family (a tick hook and two saved keys; no entity, no menu, no renderer), it is in the
+jar's behaviour (`TimeAcceleratorEntity.tick` runs the clicked block entity's ticker, whatever it
+is), and it is provable in game with an exact timer against an untouched control campfire. The
+other half of the gap — hoppers, brewing stands, mod machines — has no API (a vanilla block
+entity's tick cannot be run), and randomly-ticking blocks still need a predicate the API does not
+expose (§Deviations 2).
+
+### Red, then green
+
+The rules went into `runtime.rs` first, with stubs that could only fail
+(`accelerated_family` knowing the furnace family only, `campfire_progress` returning its input).
+`cargo test` then printed, verbatim (`ports/_shared/evidence/tiab/sdk-test-red-campfire.log`):
+
+```
+---- runtime::tests::the_campfire_family_is_the_second_accelerated_target stdout ----
+thread 'runtime::tests::the_campfire_family_is_the_second_accelerated_target' panicked at src/runtime.rs:536:9:
+assertion `left == right` failed
+  left: None
+ right: Some(Campfire)
+---- runtime::tests::a_campfire_timer_stops_at_its_cooking_time stdout ----
+thread 'runtime::tests::a_campfire_timer_stops_at_its_cooking_time' panicked at src/runtime.rs:571:9:
+assertion `left == right` failed
+  left: 599
+ right: 600
+---- runtime::tests::a_lit_campfire_advances_by_the_extra_ticks stdout ----
+thread 'runtime::tests::a_lit_campfire_advances_by_the_extra_ticks' panicked at src/runtime.rs:562:9:
+assertion `left == right` failed
+  left: 10
+ right: 11
+---- runtime::tests::an_unlit_campfire_cools_two_ticks_a_tick stdout ----
+thread 'runtime::tests::an_unlit_campfire_cools_two_ticks_a_tick' panicked at src/runtime.rs:580:9:
+assertion `left == right` failed
+  left: 100
+ right: 98
+
+failures:
+    runtime::tests::a_campfire_timer_stops_at_its_cooking_time
+    runtime::tests::a_lit_campfire_advances_by_the_extra_ticks
+    runtime::tests::an_unlit_campfire_cools_two_ticks_a_tick
+    runtime::tests::the_campfire_family_is_the_second_accelerated_target
+
+test result: FAILED. 24 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+Green: `28 passed; 0 failed` (`sdk-test.log`). The five rules the tests pin:
+
+| Rule | Test |
+|---|---|
+| `minecraft:campfire`/`soul_campfire` are the second family; `chest`, `hopper`, `grass_block` are none | `the_campfire_family_is_the_second_accelerated_target` |
+| a lit slot's timer rises by `extra` | `a_lit_campfire_advances_by_the_extra_ticks` |
+| it stops at its cooking time (the campfire's own tick completes on `>=`) | `a_campfire_timer_stops_at_its_cooking_time` |
+| an unlit campfire cools two a tick per accelerated tick, never below zero | `an_unlit_campfire_cools_two_ticks_a_tick` |
+| an empty slot holds no timer and no step invents one | `an_empty_campfire_slot_stays_empty` |
+
+### In game
+
+`launcher-game.sh run tiab` (built `Compiling tiab (1 of 1)`; `--offscreen`, The End arena). Phase G
+is the new family: two lit campfires with one potato each, one accelerated, one the control.
+
+```
+== G: a campfire is a target too, at exactly the accelerator's rate ==
+  tiab 202,101,10 n=28 t=5299 stored=40 total=40 kind=campfire cook=26 ct=600 out=1 lit=1 acc=none
+  tiab 202,101,12 n=29 t=5305 stored=60 total=60 kind=campfire cook=13 ct=600 out=1 lit=1 acc=none
+  over 105 game ticks the campfire's timer advanced 210 (105 of them accelerated); the control's advanced 134
+  the accelerated potato finished and dropped (1 baked potato); the control is still cooking (cook 406)
+PASS: … a paid use makes a campfire's potato cook at exactly the accelerator's rate and finish while the control is still raw, and the jar's shaped recipe crafts exactly one bottle from its five ingredients
+EXIT:0
+```
+
+The numbers are exact relations, not readings: the accelerated campfire's first slot advanced by
+`(g2_T - g1_T) + (g1_REM - g2_REM)` — the game ticks it lived through plus the ticks the
+accelerator still owed, read from the same one-line snapshot — while the control advanced by
+exactly its own clock ticks. The finished potato left the fire (`out=0`) and appeared as a
+`minecraft:baked_potato` item entity, while the control's was still half-cooked (`cook 406` of
+600). `SELFTEST=1` asserts one tick more than that and fails (`EXIT:1`); the game without the
+package fails at phase A because the item id does not exist (`EXIT:1`).
+
+Phase H is the parity rule's sharpest case: the carried shaped recipe is crafted in a real
+crafting table (grid 100-108, result 200) and gives exactly one bottle with every ingredient
+consumed; a grid without the clock and the clock alone both craft nothing.
+
+### Coverage (every family in the jar)
+
+| Family (jar inventory, `FINDINGS.md`) | Status |
+|---|---|
+| item `tiab:time_in_a_bottle` (model, animated texture, 8 lang files) | **tested** — A: given, read back from the inventory, an unknown `tiab:` id refused; the tooltip's two lines are unit-tested formatting (`clock_parts`) and not asserted in game (client text, no renderer assertion needed) |
+| recipe `GGG / DCD / LBL` | **tested** — H: crafted, 1 bottle, ingredients consumed; no-clock and clock-alone controls stay empty |
+| block tag `#tiab:un_acceleratable` (chest, grass_block) | **carried and read by the click path; not independently assertable** — both of its blocks are outside the two families the port drives (upstream's tag has the same role: a target the mod cannot tick), so no in-game observation distinguishes it at this pin |
+| the furnace family (furnace, smoker, blast furnace) | **tested** — C, D, E, F: creative/paid/refused uses, exact spend, rate doubling and the 128x ceiling |
+| the campfire family (campfire, soul campfire) | **tested** — G: timer at exactly the accelerator's rate, the cook completes and drops while the control cooks on; soul campfire shares the id branch (`accelerated_family`), not placed in game |
+| hoppers, brewing stands, mod machines as targets | **blocked(no vanilla-block-entity-tick API)** — the click is not claimed; §Deviations 2 |
+| randomly-ticking blocks at 1/1365 | **blocked(no random-tick predicate API)** — `block_random_tick` runs one, nothing answers "does this state tick randomly" |
+| the accelerator entity (persistence, floating time text) | **blocked(no mod entity registration)** — the table is in memory; §Deviations 1 |
+| sounds, particles, client renderer | **not ported** — client-tier; §Deviations 5 |
+| JEI/EMI category | **not ported** — integration; the lang key is carried; §Deviations 6 |
+| config file (`ITiabConfig`) | **not ported** — the four defaults are `runtime.rs` constants; §Deviations 4 |
+| `/tiab time` | **tested** — B, F: add/remove drive the account; the reply "Added 60 seconds" is asserted (G) |
+| `/tiab info` | **tested** — every phase parses it; it refuses a non-family block (`kind=none`) and a source without reach/permission |
+
 ## Verification
 
 Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-development,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices
 
-Pin **`0b14f8acfd97fa2c750e42795249dcc981178ca4`**, mixins
-**`e59da9094f0c2fdda6c627fe9eff22dec6a906f0`**, launcher 0.2.78. Every command
-ran directly in the port (the SDK layout; `build-slot.sh` speaks the old tool)
-with `CARGO_INCREMENTAL=0`, no `--target-dir`. Evidence:
-`ports/_shared/evidence/tiab/` (`sdk-*.log`, `sdk-uses.json`,
-`retired-hnmod-0.1.0/`).
+Pin **`0a875da91dbb0fdcb7ba8c42c11341aa229af51a`** (Nightly 2026-11-20), mixins
+**`e59da9094f0c2fdda6c627fe9eff22dec6a906f0`**, launcher 0.2.92. (The 0.2.0/0.2.1
+records below were taken at `0b14f8a` / launcher 0.2.78.) Every build, test and
+lint step ran through `ports/tools/build-slot.sh run --job W1-tiab --port
+ports/tiab --step test|lint|build|check -- …` with `CARGO_INCREMENTAL=0`; the
+package steps run locally in the slot (`BUILD_LOCAL=1`) because the remote box
+has no `cargo-horizon-mod`. No `--target-dir`, no private `BUILD_SLOTS_DIR`.
+Evidence: `ports/_shared/evidence/tiab/` (`sdk-*.log`, each opening with the
+package sha, `probe-rate1-intervals.log`, `retired-0.2.1/`,
+`retired-hnmod-0.1.0/`) and `ports/_shared/evidence/tiab-e2e/`.
+
+#### Slice 2 / 0.2.3 at `0a875da` (the delivered package)
+
+Everything below ran on the delivered bytes (`tiab.hmod` 33,762 B, sha256
+`c5fcfe58…1ab6`); every log opens with that sha and its size.
 
 | Check | Command | Result |
 |---|---|---|
-| Runtime + glue unit tests | `CARGO_INCREMENTAL=0 cargo test --offline` | **21 passed**, 0 failed (`sdk-test.log`) |
+| Unit tests | `CARGO_INCREMENTAL=0 cargo test --offline` | **28 passed**, 0 failed (`sdk-test.log`; red first, `sdk-test-red-campfire.log`) |
+| Lints | `cargo clippy --offline --all-targets -- -D warnings` | exit 0, 0 warnings (`sdk-clippy.log`) |
+| Formatting | `cargo fmt --check` | clean (`sdk-fmt.log`) |
+| Package | `cargo horizon-mod build`, twice, `rm -f Cargo.lock` before each | `cmp`-identical, 33,762 B, sha256 `c5fcfe58…1ab6` (`sdk-build-twice.log`) |
+| Registry check | `cargo horizon-mod check tiab.hmod` | `tiab 0.2.3 (native-mod, format native-1/0a875da/e59da90, for 26.3)`, **EXIT 0** (`sdk-check.log`) |
+| Fits the pin | `cargo horizon-mod fits tiab.hmod --build 0a875da` | `0a875da  made for`, EXIT 0 (`sdk-fits.log`) |
+| Fits another build | `cargo horizon-mod fits tiab.hmod --build 0b14f8a` | `0b14f8a  fits`, EXIT 0 (`sdk-fits-other.log`) |
+| Package gate | `python3 ports/tools/verify-sdk-package.py tiab` | **1/1 verified** (runtime byte-identical tree↔package, no packed `Cargo.lock`, 25 entries) |
+| In game, main | `launcher-game.sh run tiab` (phases A–H) | **PASS + `EXIT:0`** (`tiab-e2e/e2e-launcher.log`) |
+| In game, control | the same Nightly **without** the package | `FAIL`, `EXIT:1` — the item id does not exist (`tiab-e2e/e2e-launcher-control.log`) |
+| In game, counterfactual | `SELFTEST=1` (G's campfire assertion off by one) | `FAIL`, `EXIT:1` (`tiab-e2e/e2e-launcher-selftest.log`) |
+| e2e log gate | `python3 ports/tools/check-e2e-logs.py tiab-e2e --strict` | `logs=3 ok=3 missing-exit=0 bad-exit=0` |
+| Rate-1 probe | 60 intervals × 25 ticks, `cooked` vs `ticks + delivered` | 59 exact, 1 short by one tick (`probe-rate1-intervals.log`) |
+
+#### Slice 1 / 0.2.0 (historical)
+
+| Check | Command | Result |
 | Lints | `cargo clippy --offline --all-targets -- -D warnings` | exit 0, 0 warnings (`sdk-clippy.log`) |
 | Formatting | `cargo fmt --check` | clean (`sdk-fmt.log`) |
 | Package | `cargo horizon-mod build` | `target/horizon-mod/tiab.hmod`, EXIT 0 (`sdk-build.log`) |
@@ -582,6 +792,8 @@ control leg showed the ids unknown without the content.
 
 | File | Size | SHA-256 | Entries |
 |---|---:|---|---:|
+| `tiab.hmod` (0.2.3, SDK, delivered) | 33,762 B | `c5fcfe581c7bc0b0dc1e6bbefa4b2470d3588dcd6c7284d76a033ec50d5f1ab6` | 25 |
+| `tiab.hmod` (0.2.1, SDK) | 30,049 B | `af9399a5e6d02184bb1bd15646de114d253ffc33006ab365ddb2fe119f49f8d1` | 25 |
 | `tiab.hmod` (0.2.0, SDK) | 28,391 B | `5546d00d88d90e1383d6245dfd1ca3a6f217c824245244a6b382f00ebe09850b` | 25 |
 | `content/tiab.hmod` (0.1.0, retired) | 5,973 B | `753112b914754202c680584f9b1c094f5d6955755df33735ff1a8b3b275e9f36` | 17 |
 | `tiab.hnmod` (0.1.0, retired) | 18,685 B | `d6c974f348a339cdf8976f31835d24f39071845f62cfa3b244f3bb58e89257ec` | 14 |
@@ -615,6 +827,43 @@ relax the publishing bar: MIT, maintainer approval still required.
 - `assets/tiab/`, `data/tiab/` — the carried content (16 files).
 - `LICENSE`, `LICENSE-NOTICE.md`, `README.md` — inside the package.
 - `tools/e2e.sh` (the scenario; needs `GAME=` from a launcher build),
-  `tools/assemble_content.py` (re-creates the carried files from the jar).
-- `tiab.hmod` — the delivered package (28,391 B, sha256 `5546d00d…9850b`).
+  `tools/recipe_check.py` (the carried recipe, crafted in a real table from the
+  e2e), `tools/assemble_content.py` (re-creates the carried files from the jar).
+- `tiab.hmod` — the delivered package (33,762 B, sha256 `c5fcfe58…1ab6`).
 - `FINDINGS.md`, `CONTENT.md`, `PLAN.md`, this file.
+
+## Review fixes (2026-11-18 review, rebuilt 2026-11-19 at 0.2.1)
+
+Skills: superpowers/using-superpowers, systematic-debugging, test-driven-development, verification-before-completion; BeautifulRust/rust-best-practices, rust-port
+
+**Finding (`src/glue.rs:291`, `src/lib.rs:153`).** `/tiab info` accepted arbitrary coordinates in the
+player's level, read a block entity there and reported slot 2's count for any ITEMS container, with
+no distance or access check.
+
+**Fix.** `runtime::info_permitted(permission, distance)` (an operator — level 2 — or the console may
+read anywhere; everyone else only within `INFO_REACH` = 6 blocks, an unreadable distance refused) is
+checked before the readout, and `glue::furnace_state` now answers `(-1, 0, 0)` unless the block is a
+furnace, smoker or blast furnace (`runtime::furnace_block`, which `glue::is_furnace` also uses), so
+another container's slot 2 is never read. A refusal prints `INFO_DENIED`.
+
+**Tests.** `runtime::tests::a_diagnostic_read_needs_reach_or_permission` and
+`only_the_furnace_family_is_read` (both red against stubs that allowed everything).
+
+**A port defect the in-game leg found (fixed here).** The migrated `glue::extra_block_ticks` returned
+`rate - 1`, so a rate-1 use was a no-op; upstream's `TimeAcceleratorEntity.tick` runs the target's
+ticker `getTimeRate()` times *in addition* to the engine's tick (read at
+`common/…/TimeAcceleratorEntity.java:64-77`), and C's `ran exactly 594 block ticks` assertion failed
+at 0. The function now returns `rate`, pinned by `glue::tests::a_rate_one_accelerator_owes_one_extra_tick`.
+The cook timer is also written **at most at `total`** (vanilla completes on `>=`), so a rate-1 step is
+never dropped; a rate above 1 can lose up to `rate - 1` ticks on the step that completes a cook, which
+is F's recorded bound (`glue::tests::the_cook_timer_is_capped_at_its_total`).
+
+**Ladder (0.2.1).** `cargo test` 23 passed · clippy `-D warnings` exit 0 · `fmt --check` exit 0 · two
+builds byte-identical · `check` exit 0 (`tiab 0.2.1 …`) · `fits --build 0b14f8a` exit 0.
+
+**In game.** `launcher-game.sh run tiab` → `PASS` + `E2E EXIT:0` (C 594, D 0, E 600/576, F 2×567 with
+8 lost finishing 12 cooks inside the bound); control + `EXIT:1`. Evidence:
+`ports/_shared/evidence/tiab-e2e/`.
+
+**Package.** `tiab.hmod` **30,049 B**, sha256
+`af9399a5e6d02184bb1bd15646de114d253ffc33006ab365ddb2fe119f49f8d1`.

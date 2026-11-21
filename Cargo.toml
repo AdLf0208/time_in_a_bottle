@@ -7,7 +7,7 @@
 #
 # Cargo's name and version are not the mod's identity: horizon-mod.toml is.
 name = "tiab"
-version = "0.2.0"
+version = "0.2.3"
 edition = "2024"
 license = "MIT"
 description = "Time in a Bottle for Horizon: a bottle that stores ticks and spends them accelerating a furnace"

@@ -178,6 +178,93 @@ impl Default for Accelerator {
     }
 }
 
+/// `Commands.LEVEL_GAMEMASTERS`: an operator may read a furnace anywhere.
+pub const DIAGNOSTIC_PERMISSION: u8 = 2;
+
+/// The server's block-interaction reach, rounded up: 4.5 blocks standing, 5 in creative. A
+/// readout within it is the ordinary interaction path — the same distance the player could
+/// right-click the furnace from.
+pub const INFO_REACH: f64 = 6.0;
+
+/// Whether a source may read the diagnostic at `distance`: an operator anywhere, everyone else
+/// only where they could open the block themselves. An unreadable distance is never close.
+#[must_use]
+pub fn info_permitted(permission: Option<u8>, distance: Option<f64>) -> bool {
+    match permission {
+        // No player behind the source: the console (and a command block) may read anywhere,
+        // as the vanilla data commands do.
+        None => true,
+        Some(level) if level >= DIAGNOSTIC_PERMISSION => true,
+        Some(_) => distance.is_some_and(|distance| distance.is_finite() && distance <= INFO_REACH),
+    }
+}
+
+/// The block-entity families the accelerator can drive.
+///
+/// Upstream's `TimeAcceleratorEntity` runs the clicked block entity's own tick `rate` times a game
+/// tick, whatever it is. The pin exposes no way to run a vanilla block entity's tick (`notes.md`
+/// §5), so a family is accelerated by advancing the saved timers its own routine reads, and each
+/// family the port can do that for is one entry here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Family {
+    /// `minecraft:furnace`, `smoker`, `blast_furnace`: `cooking_time_spent`,
+    /// `cooking_total_time` and `lit_time_remaining`.
+    Furnace,
+    /// `minecraft:campfire`, `soul_campfire`: the four `CookingTimes`/`CookingTotalTimes` slots.
+    Campfire,
+}
+
+/// A campfire's fire state: its own tick cooks while it is lit and cools while it is not.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fire {
+    /// `lit=true`: `CampfireBlockEntity.cookTick`.
+    Lit,
+    /// `lit=false`: `CampfireBlockEntity.cooldownTick`.
+    Unlit,
+}
+
+/// The family of the block entity at `block`, when the accelerator can drive it.
+///
+/// `None` is upstream's `FAIL` and the readout's "not this mod's state": the click is not claimed
+/// (the block's own `use` runs) and no timer is touched.
+#[must_use]
+pub fn accelerated_family(block: &str) -> Option<Family> {
+    match block {
+        "minecraft:furnace" | "minecraft:smoker" | "minecraft:blast_furnace" => {
+            Some(Family::Furnace)
+        }
+        "minecraft:campfire" | "minecraft:soul_campfire" => Some(Family::Campfire),
+        _ => None,
+    }
+}
+
+/// Whether `block` is in the furnace family: the timing keys and output slot the readout reports.
+#[must_use]
+pub fn furnace_block(block: &str) -> bool {
+    accelerated_family(block) == Some(Family::Furnace)
+}
+
+/// What `extra` accelerated block ticks do to one campfire slot's `CookingTimes` entry.
+///
+/// A lit campfire's own tick raises every occupied slot by one and completes the cook at
+/// `progress >= total`; the accelerated steps therefore raise the timer, held at the slot's
+/// cooking time so the campfire's own tick still finishes the job. An unlit campfire runs
+/// `cooldownTick`, which lowers the progress by two a tick and never below zero.
+#[must_use]
+pub fn campfire_progress(progress: i32, total: i32, extra: i32, fire: Fire) -> i32 {
+    if extra <= 0 {
+        return progress.max(0);
+    }
+    match fire {
+        Fire::Lit => progress.max(0).saturating_add(extra).min(total.max(0)),
+        // `cooldownTick` runs `progress - 2` clamped at zero, once a tick.
+        Fire::Unlit => progress
+            .saturating_sub(extra.saturating_mul(2))
+            .max(0)
+            .min(total.max(0)),
+    }
+}
+
 /// `/tiab time add|remove <seconds>`: upstream clamps to
 /// `MAX_STORED_TIME / TICKS_CONST` seconds, then multiplies by `TICKS_CONST`.
 pub fn seconds_to_ticks(seconds: i32) -> i32 {
@@ -411,5 +498,108 @@ mod tests {
             StoredTime::clock_text(MAX_STORED_TIME),
             clock(24 * 360, 0, 0)
         );
+    }
+
+    /// The review finding: `/tiab info` is a remote readout of a block's timers and of the
+    /// output slot behind it. It is allowed where the player could open the furnace himself
+    /// (within block reach) and, as an administrative read, anywhere for an operator; an
+    /// unknown distance is never "close".
+    #[test]
+    fn a_diagnostic_read_needs_reach_or_permission() {
+        assert!(
+            !info_permitted(Some(0), Some(INFO_REACH + 1.0)),
+            "far, no op"
+        );
+        assert!(info_permitted(Some(0), Some(INFO_REACH)), "at reach");
+        assert!(info_permitted(None, Some(2.0)), "the console");
+        assert!(
+            info_permitted(Some(DIAGNOSTIC_PERMISSION), Some(500.0)),
+            "op"
+        );
+        assert!(!info_permitted(Some(0), None), "unreadable is refused");
+        assert!(!info_permitted(Some(0), Some(f64::NAN)), "not a distance");
+    }
+
+    /// Only the furnace family has the `cooking_time_spent`/`lit_time_remaining` payload and
+    /// the output slot the readout reports; another container's slot 2 is not this mod's.
+    #[test]
+    fn only_the_furnace_family_is_read() {
+        for block in [
+            "minecraft:furnace",
+            "minecraft:smoker",
+            "minecraft:blast_furnace",
+        ] {
+            assert!(furnace_block(block), "{block}");
+        }
+        for block in [
+            "minecraft:chest",
+            "minecraft:hopper",
+            "tiab:time_in_a_bottle",
+        ] {
+            assert!(!furnace_block(block), "{block}");
+        }
+    }
+
+    /// Upstream accelerates any block entity, and a campfire is the second family whose saved
+    /// timers this port can advance: its four cooking slots. A block with neither timers nor a
+    /// known family is left to its own `use` (upstream's `FAIL`).
+    #[test]
+    fn the_campfire_family_is_the_second_accelerated_target() {
+        assert_eq!(
+            accelerated_family("minecraft:campfire"),
+            Some(Family::Campfire)
+        );
+        assert_eq!(
+            accelerated_family("minecraft:soul_campfire"),
+            Some(Family::Campfire)
+        );
+        assert_eq!(
+            accelerated_family("minecraft:furnace"),
+            Some(Family::Furnace)
+        );
+        for block in [
+            "minecraft:chest",
+            "minecraft:hopper",
+            "minecraft:grass_block",
+        ] {
+            assert_eq!(accelerated_family(block), None, "{block}");
+        }
+        assert!(!furnace_block("minecraft:campfire"));
+    }
+
+    /// A lit campfire cooks each occupied slot a tick at a time; `rate` extra block ticks raise
+    /// the timer by `rate`, which is what makes the potato finish in half the game ticks.
+    #[test]
+    fn a_lit_campfire_advances_by_the_extra_ticks() {
+        assert_eq!(campfire_progress(10, 600, 1, Fire::Lit), 11);
+        assert_eq!(campfire_progress(10, 600, 63, Fire::Lit), 73);
+        assert_eq!(campfire_progress(0, 600, 128, Fire::Lit), 128);
+    }
+
+    /// The timer stops at the slot's cooking time: the campfire's own tick completes the cook on
+    /// `progress >= total`, so writing past it would only lose ticks (the furnace family's shape).
+    #[test]
+    fn a_campfire_timer_stops_at_its_cooking_time() {
+        assert_eq!(campfire_progress(599, 600, 1, Fire::Lit), 600);
+        assert_eq!(campfire_progress(590, 600, 63, Fire::Lit), 600);
+        assert_eq!(campfire_progress(0, 600, i32::MAX, Fire::Lit), 600);
+    }
+
+    /// `cooldownTick`: an unlit campfire lowers every progress by two a tick, never below zero.
+    /// The accelerated steps do the same, `rate` times.
+    #[test]
+    fn an_unlit_campfire_cools_two_ticks_a_tick() {
+        assert_eq!(campfire_progress(100, 600, 1, Fire::Unlit), 98);
+        assert_eq!(campfire_progress(100, 600, 63, Fire::Unlit), 0);
+        assert_eq!(campfire_progress(3, 600, 2, Fire::Unlit), 0);
+    }
+
+    /// An empty slot holds no timer, and no accelerated step may invent one.
+    #[test]
+    fn an_empty_campfire_slot_stays_empty() {
+        assert_eq!(campfire_progress(0, 0, 1, Fire::Lit), 0);
+        assert_eq!(campfire_progress(0, 0, 128, Fire::Lit), 0);
+        assert_eq!(campfire_progress(0, 0, 63, Fire::Unlit), 0);
+        assert_eq!(campfire_progress(42, 600, 0, Fire::Lit), 42);
     }
 }

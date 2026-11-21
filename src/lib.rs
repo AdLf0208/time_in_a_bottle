@@ -4,15 +4,16 @@
 //! on it, and an accelerator that makes a block tick faster. This package is
 //! the item, its carried assets and data, and the code that spends the
 //! account: while the first bottle in an inventory is carried it gains one
-//! stored tick per game tick, and right-clicking a furnace, smoker or blast
-//! furnace with it spends [`runtime::EACH_USE_TICKS`] of them for one use —
-//! 600 game ticks at one extra block tick each. A second click on the same
-//! block doubles the rate, up to [`runtime::MAX_RATE`].
+//! stored tick per game tick, and right-clicking a block entity it can drive —
+//! the furnace family (furnace, smoker, blast furnace) or the campfire family —
+//! with it spends [`runtime::EACH_USE_TICKS`] of them for one use: 600 game
+//! ticks at one extra block tick each. A second click on the same block doubles
+//! the rate, up to [`runtime::MAX_RATE`].
 //!
 //! The account and one accelerator's arithmetic are [`runtime`]'s, pure and
-//! unit-tested, and byte-identical to the pre-SDK port. [`glue`] holds the
-//! game side: the item's `tiab:stored_time` component, the accelerator table
-//! (the API cannot declare an entity) and the furnace's saved timers.
+//! unit-tested. [`glue`] holds the game side: the item's `tiab:stored_time`
+//! component, the accelerator table (the API cannot declare an entity) and the
+//! families' saved timers.
 
 mod glue;
 pub mod runtime;
@@ -28,10 +29,10 @@ use mod_api::{
 
 use crate::glue::{
     BOTTLE, STORED_TIME, accelerator_at, account_in_slot, clock_parts, extra_block_ticks,
-    first_bottle_slot, info_line, is_furnace, set_accelerator, store_in_slot, stored, take_for,
+    family_at, first_bottle_slot, info_line, set_accelerator, store_in_slot, stored, take_for,
     un_acceleratable,
 };
-use crate::runtime::{Accelerator, TICKS_CONST, seconds_to_ticks};
+use crate::runtime::{Accelerator, TICKS_CONST, accelerated_family, seconds_to_ticks};
 
 /// The mod's session state: the bottle's registry key, needed to recognise the
 /// carried stack from a global hook.
@@ -166,6 +167,18 @@ impl Hooks for Mod {
             let Some(level) = player.level(&*host) else {
                 return Flow::Cancel;
             };
+            // A diagnostic that reports a block's timers and its output slot is not a
+            // remote probe: its source needs reach (or an operator's permission), and the
+            // block has to be one this mod accelerates (the review finding).
+            let distance = player
+                .entity()
+                .distance_to_sqr(&*host, [f64::from(x), f64::from(y), f64::from(z)])
+                .map(f64::sqrt);
+            let permission = player.permission_level(&*host);
+            if !runtime::info_permitted(permission, distance) {
+                event.replies.push(Text::literal(glue::INFO_DENIED));
+                return Flow::Cancel;
+            }
             let line = info_line(host, event.player, bottle, level, [x, y, z], n);
             event.replies.push(Text::literal(line));
             return Flow::Cancel;
@@ -248,8 +261,13 @@ impl Hooks for Mod {
         let Some(level) = host.level(event.click.dimension.key().id()) else {
             return Flow::Continue;
         };
-        // Upstream answers FAIL: the block's own use runs (a furnace opens).
-        if !is_furnace(host, level, pos) || un_acceleratable(host, level, pos) {
+        // Upstream answers FAIL for a block with no ticker and no random tick, and for the
+        // `#tiab:un_acceleratable` tag: the block's own use runs (a furnace opens). The families
+        // this port can drive are the furnace's and the campfire's timers (notes.md gap 2).
+        let acceleratable = level
+            .block(&*host, pos)
+            .is_some_and(|block| accelerated_family(&block.id(&*host)).is_some());
+        if !acceleratable || un_acceleratable(host, level, pos) {
             return Flow::Continue;
         }
         let uuid = event.click.player;
@@ -314,7 +332,7 @@ impl Hooks for Mod {
         for (pos, accelerator) in take_for(level) {
             // Upstream removes the accelerator when the target stops being
             // tickable or joins the block tag.
-            if un_acceleratable(host, level, pos) || !is_furnace(host, level, pos) {
+            if un_acceleratable(host, level, pos) || family_at(host, level, pos).is_none() {
                 continue;
             }
             let (block_ticks, next) = accelerator.run_tick();
